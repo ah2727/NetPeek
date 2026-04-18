@@ -1,0 +1,36 @@
+-- http-sitemap.npe
+description = "Fetch and parse sitemap.xml"
+author = "NPE"
+license = "MIT"
+categories = {"discovery", "safe", "default"}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or 
+           port.number == 80 or port.number == 443 or port.number == 8080
+end
+
+action = function(host, port)
+    local http = require "http"
+    local url = string.format("http://%s:%d/sitemap.xml", host.ip, port.number)
+    
+    local response = http.get(url)
+    if not response or response.status ~= 200 then
+        return nil
+    end
+    
+    local body = response.body or ""
+    if #body == 0 then
+        return "Empty sitemap.xml"
+    end
+    
+    local urls = {}
+    for loc in body:gmatch("<loc>(.-)</loc>") do
+        table.insert(urls, loc)
+    end
+    
+    if #urls == 0 then
+        return "No URLs found in sitemap"
+    end
+    
+    return string.format("Found %d URLs:\n%s", #urls, table.concat(urls, "\n"))
+end

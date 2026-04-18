@@ -1,0 +1,108 @@
+description = "Heuristic SQL injection detection via HTTP parameter probes"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"intrusive", "vuln"}
+portrule_ports = {80, 443, 8080, 8443}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or
+           port.number == 80 or port.number == 443 or port.number == 8080 or port.number == 8443
+end
+
+local function append_query(path, query)
+    if string.find(path, "?", 1, true) then
+        return path .. "&" .. query
+    end
+    return path .. "?" .. query
+end
+
+action = function(host, port)
+    local args = (npe and npe.args) or {}
+    local intrusive = require "intrusive"
+    local vuln = require "vuln"
+    local http = require "http"
+
+    local timeout_ms = math.floor(intrusive.arg_number(args, "timeout_ms", 5000, 1000, 15000))
+    local path = intrusive.normalize_path(args.path or "/")
+    local target = intrusive.target(host, port)
+
+    local payloads = {
+        "%27",
+        "%27%20OR%20%271%27%3D%271",
+        "%22%20OR%20%221%22%3D%221",
+        "1%27%20ORDER%20BY%201--",
+    }
+
+    local indicators = {
+        "sql syntax",
+        "mysql",
+        "mariadb",
+        "postgresql",
+        "unterminated quoted string",
+        "sqlstate",
+        "odbc",
+        "sqlite",
+        "oracle",
+        "ora-",
+        "microsoft ole db",
+    }
+
+    for _, payload in ipairs(payloads) do
+        local probe_path = append_query(path, "id=" .. payload)
+        local url = intrusive.build_url(host, port, probe_path)
+
+        local response, err = http.request("GET", url, {
+            timeout_ms = timeout_ms,
+            verify_ssl = false,
+            headers = {
+                ["User-Agent"] = "NetPeek/SQLi-Probe",
+                ["Accept"] = "*/*",
+            }
+        })
+
+        if response then
+            local body = tostring(response.body or "")
+            local status = tonumber(response.status or response.status_code or 0) or 0
+            local matched, token = intrusive.indicator_match(body, indicators)
+
+            if matched then
+                return vuln.result({
+                    check = "http-sql-injection",
+                    cve = "generic",
+                    vulnerable = true,
+                    confidence = "medium",
+                    severity = "high",
+                    target = target,
+                    evidence = string.format("status=%d indicator=%s payload=%s", status, tostring(token), payload),
+                    notes = "HTTP response contains SQL error signature after injection payload",
+                })
+            end
+        elseif err then
+            local err_text = tostring(err)
+            local matched, token = intrusive.indicator_match(err_text, indicators)
+            if matched then
+                return vuln.result({
+                    check = "http-sql-injection",
+                    cve = "generic",
+                    vulnerable = true,
+                    confidence = "low",
+                    severity = "high",
+                    target = target,
+                    evidence = string.format("error_indicator=%s payload=%s", tostring(token), payload),
+                    notes = "Probe error message contained SQL-related indicator",
+                })
+            end
+        end
+    end
+
+    return vuln.result({
+        check = "http-sql-injection",
+        cve = "generic",
+        vulnerable = false,
+        confidence = "medium",
+        severity = "high",
+        target = target,
+        evidence = "no_sql_error_indicators_detected",
+        notes = "No SQL error signature observed for tested payload set",
+    })
+end

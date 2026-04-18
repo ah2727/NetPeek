@@ -1,0 +1,27 @@
+description = "Extract HTML page title from HTTP services"
+author = "NetPeek Team"
+categories = {"default", "discovery", "safe"}
+
+portrule = function(host, port)
+    return port.service == "http" or port.number == 80 or port.number == 8080
+end
+
+action = function(host, port)
+    local url = string.format("http://%s:%d/", host.ip, port.number)
+    
+    local response, err = npe.http.get(url)
+    if not response then
+        return "HTTP request failed: " .. (err or "unknown error")
+    end
+
+    if response.status_code ~= 200 then
+        return "HTTP error: " .. tostring(response.status_code)
+    end
+
+    local title = response.body:match("<title>(.-)</title>")
+    if title then
+        return title
+    else
+        return "No title found"
+    end
+end

@@ -1,0 +1,30 @@
+description = "Subdomain enumeration helper"
+author = "NetPeek Contributors"
+categories = {"discovery", "safe"}
+
+hostrule = function(host)
+    return host.status == "up"
+end
+
+action = function(host)
+    local domain = (npe.args and npe.args.domain) or host.hostname or host.ip
+    if not domain or domain == "" then
+        return "ERROR: missing domain"
+    end
+
+    local words = {"www", "mail", "api", "dev", "staging"}
+    local out = {}
+
+    for _, w in ipairs(words) do
+        local fqdn = w .. "." .. domain
+        local ans = npe.dns.resolve(fqdn, "A")
+        if ans and ans.records and #ans.records > 0 then
+            table.insert(out, fqdn .. " => " .. tostring(ans.records[1].value or ""))
+        end
+    end
+
+    if #out == 0 then
+        return "No subdomains found"
+    end
+    return table.concat(out, "\n")
+end

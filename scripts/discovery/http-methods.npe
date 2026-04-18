@@ -1,0 +1,27 @@
+-- http-methods.npe
+description = "Detect allowed HTTP methods"
+author = "NPE"
+license = "MIT"
+categories = {"discovery", "safe", "default"}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or 
+           port.number == 80 or port.number == 443 or port.number == 8080
+end
+
+action = function(host, port)
+    local http = require "http"
+    local url = string.format("http://%s:%d/", host.ip, port.number)
+    
+    local response = http.request("OPTIONS", url)
+    if not response then
+        return nil
+    end
+    
+    local allow = response.headers["Allow"] or response.headers["allow"]
+    if allow then
+        return "Allowed methods: " .. allow
+    end
+    
+    return "No Allow header found"
+end

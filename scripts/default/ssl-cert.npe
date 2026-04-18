@@ -1,0 +1,21 @@
+-- scripts/default/ssl-cert.npe
+description = "Extract SSL/TLS certificate information"
+author = "NetPeek Team"
+categories = {"default", "safe", "discovery"}
+
+portrule = function(host, port)
+    return port.service == "https" or port.number == 443 or port.number == 8443
+end
+
+action = function(host, port)
+    local cert = ssl.get_cert(host.ip, port.number)
+    if not cert then
+        return nil
+    end
+    local output = {}
+    table.insert(output, "Subject: " .. cert.subject.CN)
+    table.insert(output, "Issuer:  " .. cert.issuer.CN)
+    table.insert(output, "Valid:   " .. cert.not_before .. " to " .. cert.not_after)
+    table.insert(output, "SANs:    " .. table.concat(cert.san, ", "))
+    return table.concat(output, "\n")
+end

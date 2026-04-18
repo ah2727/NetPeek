@@ -1,0 +1,46 @@
+-- scripts/default/dns-info.npe
+description = "Gather DNS information for target host"
+author = "NetPeek Team"
+categories = {"default", "discovery", "safe"}
+
+hostrule = function(host)
+    return host.status == "up"
+end
+
+action = function(host)
+    local output = {}
+    
+    if host.hostname and host.hostname ~= "" then
+        table.insert(output, "Hostname: " .. host.hostname)
+    end
+    
+    local ptr = npe.dns.reverse(host.ip)
+    if ptr and ptr.records and #ptr.records > 0 then
+        table.insert(output, "PTR: " .. ptr.records[1].value)
+    end
+    
+    if host.hostname and host.hostname ~= "" then
+        local mx = npe.dns.mx(host.hostname)
+        if mx and mx.records and #mx.records > 0 then
+            local mx_list = {}
+            for _, rec in ipairs(mx.records) do
+                table.insert(mx_list, rec.value)
+            end
+            table.insert(output, "MX: " .. table.concat(mx_list, ", "))
+        end
+        
+        local ns = npe.dns.ns(host.hostname)
+        if ns and ns.records and #ns.records > 0 then
+            local ns_list = {}
+            for _, rec in ipairs(ns.records) do
+                table.insert(ns_list, rec.value)
+            end
+            table.insert(output, "NS: " .. table.concat(ns_list, ", "))
+        end
+    end
+    
+    if #output > 0 then
+        return table.concat(output, "\n")
+    end
+    return nil
+end

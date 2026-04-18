@@ -1,0 +1,72 @@
+description = "SMTP brute force"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"auth", "brute", "intrusive"}
+portrule_ports = {25, 465, 587}
+
+portrule = function(host, port)
+    return port.service == "smtp" or port.number == 25 or port.number == 465 or port.number == 587
+end
+
+local function csv_to_table(value)
+    local out = {}
+    if not value or value == "" then
+        return out
+    end
+    for token in string.gmatch(value, "([^,]+)") do
+        token = string.gsub(token, "^%s+", "")
+        token = string.gsub(token, "%s+$", "")
+        if token ~= "" then
+            table.insert(out, token)
+        end
+    end
+    return out
+end
+
+action = function(host, port)
+    local args = (npe and npe.args) or {}
+    local users = args.username_list or csv_to_table(args.usernames)
+    local passwords = args.password_list or csv_to_table(args.passwords)
+    local domain = args.smtp_domain or "localhost"
+    local method = args.smtp_auth_method or "login"
+
+    if (type(users) == "table" and #users == 0) or users == nil then
+        return "error: provide username_list or usernames via --script-args"
+    end
+    if (type(passwords) == "table" and #passwords == 0) or passwords == nil then
+        return "error: provide password_list or passwords via --script-args"
+    end
+
+    local result, err = brute.start({
+        username_list = users,
+        password_list = passwords,
+        delay = tonumber(args.delay or "0") or 0,
+        max_attempts = tonumber(args.max_attempts or "0") or 0,
+        login_function = function(username, password)
+            local login, login_err = smtp.auth(host.ip, port.number, domain, username, password, method)
+            if not login then
+                return false, login_err
+            end
+            return login.success == true, login.message or ""
+        end
+    })
+
+    if not result then
+        return "SMTP brute probe failed: " .. tostring(err or "unknown error")
+    end
+
+    local output = {
+        "SMTP brute force",
+        "success: " .. tostring(result.success),
+        "attempts: " .. tostring(result.attempts or 0)
+    }
+
+    if result.username then
+        table.insert(output, "username: " .. tostring(result.username))
+    end
+    if result.password then
+        table.insert(output, "password: " .. tostring(result.password))
+    end
+
+    return table.concat(output, "\n")
+end

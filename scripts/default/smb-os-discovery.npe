@@ -1,0 +1,20 @@
+-- smb-os-discovery.npe
+description = "SMB OS detection"
+author = "NetPeek Contributors"
+license = "Same as NetPeek"
+categories = {"safe", "default"}
+dependencies = {}
+
+portrule = function(host, port)
+    return port.protocol == "tcp" and (port.number == 445 or port.number == 139)
+end
+
+action = function(host, port)
+    local fd, err = npe.socket_connect(host.ip, port.number, 3000)
+    if not fd then
+        return "ERROR: " .. tostring(err)
+    end
+    net.close(fd)
+    return "SMB endpoint reachable; detailed OS fingerprint unavailable in this build"
+end
+

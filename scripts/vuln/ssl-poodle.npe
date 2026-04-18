@@ -1,0 +1,57 @@
+description = "Check SSLv3 support for POODLE risk (CVE-2014-3566)"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"vuln", "intrusive"}
+portrule_ports = {443, 8443}
+
+portrule = function(host, port)
+    return port.service == "https" or port.number == 443 or port.number == 8443
+end
+
+action = function(host, port)
+    local vuln = require "vuln"
+    local target = string.format("%s:%d", host.ip, port.number)
+
+    local sslv3_client_hello =
+        "\x16\x03\x00\x00\x31" ..
+        "\x01\x00\x00\x2d\x03\x00" ..
+        "\x53\x43\x5b\x90\x4b\x90\x4b\x90\x4b\x90\x4b\x90\x4b\x90\x4b\x90\x4b\x90\x4b\x90" ..
+        "\x00\x00\x04\x00\x04\x00\x2f\x01\x00"
+
+    local response, err = vuln.tcp_probe(host.ip, port.number, sslv3_client_hello, {
+        timeout_ms = 4500,
+        max_bytes = 4096,
+    })
+
+    if not response then
+        return vuln.result({
+            check = "ssl-poodle",
+            cve = "CVE-2014-3566",
+            vulnerable = false,
+            confidence = "low",
+            severity = "medium",
+            target = target,
+            evidence = "probe_failed:" .. tostring(err or "unknown"),
+            notes = "Could not determine SSLv3 acceptance",
+        })
+    end
+
+    local b1 = string.byte(response, 1) or 0
+    local b2 = string.byte(response, 2) or 0
+    local b3 = string.byte(response, 3) or 0
+
+    local accepted_sslv3 = (b1 == 0x16 and b2 == 0x03 and b3 == 0x00)
+
+    return vuln.result({
+        check = "ssl-poodle",
+        cve = "CVE-2014-3566",
+        vulnerable = accepted_sslv3,
+        confidence = accepted_sslv3 and "medium" or "high",
+        severity = "medium",
+        target = target,
+        evidence = string.format("tls_record=0x%02x 0x%02x 0x%02x", b1, b2, b3),
+        notes = accepted_sslv3
+            and "Server appears to accept SSLv3 handshake; downgrade risk present"
+            or "SSLv3 handshake not accepted",
+    })
+end

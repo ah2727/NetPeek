@@ -1,0 +1,40 @@
+description = "Redis server information"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"discovery", "safe", "default"}
+portrule_ports = {6379}
+
+portrule = function(host, port)
+    return port.service == "redis" or port.number == 6379
+end
+
+action = function(host, port)
+    local args = (npe and npe.args) or {}
+    local output = {"Redis server information"}
+
+    local ping = redis.ping(host.ip, port.number)
+    if ping then
+        table.insert(output, "ping: " .. tostring(ping))
+    end
+
+    if args.redis_password then
+        local ok, err = redis.auth(host.ip, port.number, args.redis_password)
+        table.insert(output, "auth_success: " .. tostring(ok ~= nil))
+        if err then
+            table.insert(output, "auth_error: " .. tostring(err))
+        end
+    end
+
+    local info = redis.info(host.ip, port.number)
+    if not info then
+        table.insert(output, "info: unavailable")
+        return table.concat(output, "\n")
+    end
+
+    table.insert(output, "redis_version: " .. tostring(info.redis_version or ""))
+    table.insert(output, "os: " .. tostring(info.os or ""))
+    table.insert(output, "arch_bits: " .. tostring(info.arch_bits or ""))
+    table.insert(output, "uptime_in_seconds: " .. tostring(info.uptime_in_seconds or ""))
+
+    return table.concat(output, "\n")
+end

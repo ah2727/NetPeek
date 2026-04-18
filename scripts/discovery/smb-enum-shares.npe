@@ -1,0 +1,42 @@
+description = "Enumerate SMB shares"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"discovery", "safe", "default"}
+portrule_ports = {445, 139}
+
+portrule = function(host, port)
+    return port.service == "smb" or port.number == 445 or port.number == 139
+end
+
+action = function(host, port)
+    local output = {"SMB share enumeration"}
+
+    local neg, neg_err = smb.negotiate(host.ip, port.number)
+    if neg then
+        table.insert(output, "protocol: " .. tostring(neg.protocol or ""))
+        table.insert(output, "dialect: " .. tostring(neg.dialect or ""))
+    elseif neg_err then
+        table.insert(output, "negotiate_error: " .. tostring(neg_err))
+    end
+
+    local session, login_err = smb.login_anonymous(host.ip, port.number)
+    if not session then
+        table.insert(output, "anonymous_login: false")
+        if login_err then
+            table.insert(output, "login_error: " .. tostring(login_err))
+        end
+        return table.concat(output, "\n")
+    end
+
+    table.insert(output, "anonymous_login: true")
+
+    local shares = session:enum_shares()
+    if shares and #shares > 0 then
+        table.insert(output, "shares: " .. table.concat(shares, ", "))
+    else
+        table.insert(output, "shares: none returned")
+    end
+
+    session:close()
+    return table.concat(output, "\n")
+end

@@ -1,0 +1,87 @@
+description = "Detect likely CSRF risk in state-changing HTTP forms"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"intrusive", "vuln"}
+portrule_ports = {80, 443, 8080, 8443}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or
+           port.number == 80 or port.number == 443 or port.number == 8080 or port.number == 8443
+end
+
+local function is_state_change_form(form_html)
+    local lower = string.lower(form_html or "")
+    if string.find(lower, "method=\"post\"", 1, true) then return true end
+    if string.find(lower, "method='post'", 1, true) then return true end
+    if string.find(lower, "method=post", 1, true) then return true end
+    if string.find(lower, "method=\"put\"", 1, true) then return true end
+    if string.find(lower, "method=\"delete\"", 1, true) then return true end
+    if string.find(lower, "name=\"_method\"", 1, true) then return true end
+    return false
+end
+
+action = function(host, port)
+    local args = (npe and npe.args) or {}
+    local intrusive = require "intrusive"
+    local vuln = require "vuln"
+    local http = require "http"
+
+    local timeout_ms = math.floor(intrusive.arg_number(args, "timeout_ms", 5000, 1000, 15000))
+    local path = intrusive.normalize_path(args.path or "/")
+    local target = intrusive.target(host, port)
+
+    local url = intrusive.build_url(host, port, path)
+    local response, err = http.request("GET", url, {
+        timeout_ms = timeout_ms,
+        verify_ssl = false,
+        headers = {
+            ["User-Agent"] = "NetPeek/CSRF-Probe",
+            ["Accept"] = "text/html,*/*",
+        }
+    })
+
+    if not response then
+        return vuln.result({
+            check = "http-csrf-detect",
+            cve = "generic",
+            vulnerable = false,
+            confidence = "low",
+            severity = "medium",
+            target = target,
+            evidence = "probe_failed:" .. tostring(err or "unknown"),
+            notes = "Unable to retrieve HTML for CSRF form analysis",
+        })
+    end
+
+    local body = tostring(response.body or "")
+    local forms = intrusive.extract_forms(body)
+
+    local total_forms = 0
+    local state_forms = 0
+    local missing_token_forms = 0
+
+    for _, form_html in ipairs(forms or {}) do
+        total_forms = total_forms + 1
+        if is_state_change_form(form_html) then
+            state_forms = state_forms + 1
+            if not intrusive.has_csrf_token(form_html) then
+                missing_token_forms = missing_token_forms + 1
+            end
+        end
+    end
+
+    local vulnerable = missing_token_forms > 0
+
+    return vuln.result({
+        check = "http-csrf-detect",
+        cve = "generic",
+        vulnerable = vulnerable,
+        confidence = vulnerable and "medium" or "low",
+        severity = "medium",
+        target = target,
+        evidence = string.format("forms=%d state_forms=%d state_forms_without_token=%d", total_forms, state_forms, missing_token_forms),
+        notes = vulnerable
+            and "Detected state-changing form(s) without obvious CSRF token field"
+            or "No state-changing forms lacking CSRF token indicators were found",
+    })
+end

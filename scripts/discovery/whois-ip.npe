@@ -1,0 +1,20 @@
+-- whois-ip.npe
+description = "WHOIS lookup"
+author = "NetPeek Contributors"
+license = "Same as NetPeek"
+categories = {"safe", "discovery"}
+dependencies = {}
+
+portrule = function(host, port)
+    return port.protocol == "tcp" and port.number == 43
+end
+
+action = function(host, port)
+    local fd, err = npe.socket_connect(host.ip, port.number, 5000)
+    if not fd then return "ERROR: " .. tostring(err) end
+    npe.send(fd, host.ip .. "\r\n", 3000)
+    local res = npe.recv(fd, 8192, 5000)
+    net.close(fd)
+    return res or "No WHOIS data"
+end
+

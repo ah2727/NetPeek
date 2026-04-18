@@ -1,0 +1,23 @@
+-- dns-zone-transfer.npe
+description = "AXFR attempt"
+author = "NetPeek Contributors"
+license = "Same as NetPeek"
+categories = {"intrusive"}
+dependencies = {}
+
+portrule = function(host, port)
+    return port.number == 53 or port.service == "dns"
+end
+
+action = function(host, port)
+    local domain = (npe.args and npe.args.domain) or host.hostname
+    if not domain or domain == "" then
+        return "ERROR: provide domain via --script-args domain=<zone>"
+    end
+    local result = npe.dns.query(host.ip, domain, "AXFR")
+    if not result then
+        return "AXFR denied or unavailable"
+    end
+    return tostring(result)
+end
+

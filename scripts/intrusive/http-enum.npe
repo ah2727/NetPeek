@@ -1,0 +1,30 @@
+-- http-enum.npe
+description = "Path brute-force from wordlist"
+author = "NetPeek Contributors"
+license = "Same as NetPeek"
+categories = {"intrusive", "discovery"}
+dependencies = {}
+
+portrule = function(host, port)
+    return port.protocol == "tcp" and (port.number == 80 or port.number == 8080 or port.number == 443)
+end
+
+action = function(host, port)
+    local paths = {"/admin", "/login", "/api", "/robots.txt", "/.git"}
+    local found = {}
+    for _, p in ipairs(paths) do
+        local fd = npe.socket_connect(host.ip, port.number, 2000)
+        if fd then
+            local req = "GET " .. p .. " HTTP/1.0\r\nHost: " .. host.ip .. "\r\n\r\n"
+            npe.send(fd, req, 2000)
+            local raw = npe.recv(fd, 512, 3000) or ""
+            net.close(fd)
+            local status = raw:match("HTTP/%d%.%d%s+(%d%d%d)")
+            if status and status ~= "404" then
+                table.insert(found, p .. " => " .. status)
+            end
+        end
+    end
+    return #found > 0 and table.concat(found, "\n") or "No interesting paths discovered"
+end
+

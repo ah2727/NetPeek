@@ -1,0 +1,25 @@
+-- dns-brute.npe
+description = "Subdomain enumeration"
+author = "NetPeek Contributors"
+license = "Same as NetPeek"
+categories = {"intrusive", "discovery"}
+dependencies = {}
+
+portrule = function(host, port)
+    return port.number == 53 or port.service == "dns"
+end
+
+action = function(host, port)
+    local domain = (npe.args and npe.args.domain) or host.hostname or host.ip
+    local words = {"www", "mail", "api", "dev", "staging"}
+    local hits = {}
+    for _, w in ipairs(words) do
+        local name = w .. "." .. domain
+        local ans = npe.dns.resolve(name, "A")
+        if ans and tostring(ans) ~= "" then
+            table.insert(hits, name .. " => " .. tostring(ans))
+        end
+    end
+    return #hits > 0 and table.concat(hits, "\n") or "No subdomains found"
+end
+

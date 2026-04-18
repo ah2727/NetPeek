@@ -1,0 +1,87 @@
+description = "Enumerate common web directories and sensitive paths"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"intrusive", "discovery"}
+portrule_ports = {80, 443, 8080, 8443}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or
+           port.number == 80 or port.number == 443 or port.number == 8080 or port.number == 8443
+end
+
+local function join_paths(base_path, item_path)
+    local base = base_path or "/"
+    local item = item_path or "/"
+
+    if string.sub(base, -1) == "/" then
+        base = string.sub(base, 1, #base - 1)
+    end
+
+    if string.sub(item, 1, 1) ~= "/" then
+        item = "/" .. item
+    end
+
+    if base == "" then
+        return item
+    end
+
+    return base .. item
+end
+
+local function is_interesting_status(code)
+    return code == 200 or code == 204 or code == 301 or code == 302 or
+           code == 307 or code == 308 or code == 401 or code == 403
+end
+
+action = function(host, port)
+    local args = (npe and npe.args) or {}
+    local intrusive = require "intrusive"
+    local vuln = require "vuln"
+    local http = require "http"
+
+    local timeout_ms = math.floor(intrusive.arg_number(args, "timeout_ms", 4000, 1000, 15000))
+    local base_path = intrusive.normalize_path(args.base_path or "/")
+    local target = intrusive.target(host, port)
+
+    local paths = intrusive.default_wordlist_small()
+    local max_paths = math.floor(intrusive.arg_number(args, "max_paths", #paths, 1, #paths))
+
+    local found = {}
+
+    for i = 1, max_paths do
+        local probe_path = join_paths(base_path, paths[i])
+        local url = intrusive.build_url(host, port, probe_path)
+
+        local response = http.request("GET", url, {
+            timeout_ms = timeout_ms,
+            verify_ssl = false,
+            headers = {
+                ["User-Agent"] = "NetPeek/DirEnum",
+                ["Accept"] = "*/*",
+            }
+        })
+
+        if response then
+            local status = tonumber(response.status or response.status_code or 0) or 0
+            if is_interesting_status(status) then
+                table.insert(found, string.format("%s[%d]", probe_path, status))
+            end
+        end
+    end
+
+    local evidence = (#found > 0) and table.concat(found, ",") or "no_interesting_paths_detected"
+    local notes = (#found > 0)
+        and "Common path enumeration found exposed/interesting endpoints"
+        or "No common paths returned interesting status codes"
+
+    return vuln.result({
+        check = "http-directory-enum",
+        cve = "none",
+        vulnerable = (#found > 0),
+        confidence = (#found > 0) and "low" or "medium",
+        severity = "low",
+        target = target,
+        evidence = evidence,
+        notes = notes,
+    })
+end

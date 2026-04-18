@@ -1,0 +1,26 @@
+description = "SNMP system information"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"discovery", "safe", "default"}
+portrule_ports = {161}
+
+portrule = function(host, port)
+    return port.service == "snmp" or port.number == 161
+end
+
+action = function(host, port)
+    local args = (npe and npe.args) or {}
+    local community = args.snmp_community or "public"
+
+    local info, err = snmp.sysinfo(host.ip, community, port.number)
+    if not info then
+        return string.format("SNMP sysinfo failed: %s", err or "unknown error")
+    end
+
+    return table.concat({
+        "SNMP system information",
+        "community: " .. tostring(info.community or community),
+        "port: " .. tostring(info.port or port.number),
+        "sysDescr: " .. tostring(info.sysDescr or "")
+    }, "\n")
+end

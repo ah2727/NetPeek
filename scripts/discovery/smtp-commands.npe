@@ -1,0 +1,33 @@
+description = "SMTP supported commands"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"discovery", "safe", "default"}
+portrule_ports = {25, 465, 587}
+
+portrule = function(host, port)
+    return port.service == "smtp" or port.number == 25 or port.number == 465 or port.number == 587
+end
+
+action = function(host, port)
+    local args = (npe and npe.args) or {}
+    local domain = args.smtp_domain or "localhost"
+
+    local banner, banner_err = smtp.banner(host.ip, port.number)
+    local caps, caps_err = smtp.ehlo(host.ip, port.number, domain)
+
+    local output = {"SMTP supported commands"}
+    if banner then
+        table.insert(output, "banner: " .. tostring(banner))
+    elseif banner_err then
+        table.insert(output, "banner_error: " .. tostring(banner_err))
+    end
+
+    if caps then
+        table.insert(output, "starttls: " .. tostring(caps.starttls))
+        table.insert(output, "pipelining: " .. tostring(caps.pipelining))
+    elseif caps_err then
+        table.insert(output, "ehlo_error: " .. tostring(caps_err))
+    end
+
+    return table.concat(output, "\n")
+end

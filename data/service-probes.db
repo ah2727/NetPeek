@@ -1,0 +1,21 @@
+# NetPeek curated probes (starter)
+Probe TCP NULL q||
+rarity 0
+
+Probe TCP GetRequest q|GET / HTTP/1.0\r\n\r\n|
+ports 80,443,8080,8443
+rarity 1
+
+Probe TCP SshHello q|\r\n|
+ports 22
+rarity 1
+
+Probe TCP MysqlHello q|\x00|
+ports 3306
+rarity 2
+
+match http m|^HTTP/1\.[01] ([0-9]{3})|s
+softmatch http m|^HTTP/|s
+match ssh m|^SSH-([0-9]+\.[0-9]+)-([^\r\n]+)|
+match mysql m|mysql|i
+softmatch ssl m|^\x16\x03|s

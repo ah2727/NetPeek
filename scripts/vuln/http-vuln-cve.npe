@@ -1,0 +1,86 @@
+description = "Generic HTTP CVE fingerprint checker"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"vuln", "safe"}
+portrule_ports = {80, 443, 8080, 8443}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or
+           port.number == 80 or port.number == 443 or port.number == 8080 or port.number == 8443
+end
+
+local function scheme_for_port(port)
+    if port.service == "https" or port.number == 443 or port.number == 8443 then
+        return "https"
+    end
+    return "http"
+end
+
+action = function(host, port)
+    local vuln = require "vuln"
+    local target = string.format("%s:%d", host.ip, port.number)
+    local scheme = scheme_for_port(port)
+    local url = string.format("%s://%s:%d/", scheme, host.ip, port.number)
+
+    local response, err = vuln.http_probe(url, "GET", {
+        timeout_ms = 5000,
+        verify_ssl = false,
+    })
+
+    if not response then
+        return vuln.result({
+            check = "http-vuln-cve",
+            cve = "multiple",
+            vulnerable = false,
+            confidence = "low",
+            severity = "medium",
+            target = target,
+            evidence = "probe_failed:" .. tostring(err or "unknown"),
+            notes = "Unable to collect HTTP fingerprint",
+        })
+    end
+
+    local headers = response.headers or {}
+    local server = tostring(headers["Server"] or headers["server"] or "")
+    local powered = tostring(headers["X-Powered-By"] or headers["x-powered-by"] or "")
+    local body = string.lower(tostring(response.body or ""))
+    local matched = {}
+
+    local function mark(cve, why)
+        table.insert(matched, cve .. "(" .. why .. ")")
+    end
+
+    local lower_server = string.lower(server)
+    local lower_powered = string.lower(powered)
+
+    if string.find(lower_server, "apache/2.4.49", 1, true) then
+        mark("CVE-2021-41773", "apache_2.4.49")
+    end
+    if string.find(lower_server, "apache/2.4.50", 1, true) then
+        mark("CVE-2021-42013", "apache_2.4.50")
+    end
+    if string.find(lower_server, "nginx/1.3.", 1, true) or string.find(lower_server, "nginx/1.4.", 1, true) then
+        mark("CVE-2013-2028", "old_nginx_branch")
+    end
+    if string.find(lower_powered, "struts", 1, true) then
+        mark("CVE-2017-5638", "struts_powered_by")
+    end
+    if string.find(body, "spring boot", 1, true) and string.find(body, "whitelabel error page", 1, true) then
+        mark("CVE-2022-22965", "spring_boot_exposed")
+    end
+
+    local suspected = #matched > 0
+
+    return vuln.result({
+        check = "http-vuln-cve",
+        cve = suspected and table.concat(matched, ";") or "none_detected",
+        vulnerable = suspected,
+        confidence = suspected and "low" or "medium",
+        severity = "medium",
+        target = target,
+        evidence = string.format("server=%s powered_by=%s status=%s", server, powered, tostring(response.status or "")),
+        notes = suspected
+            and "Version/header fingerprint suggests potential CVE exposure; manual verification required"
+            or "No known vulnerable fingerprint matched current heuristic set",
+    })
+end

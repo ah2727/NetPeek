@@ -1,0 +1,24 @@
+-- ssl-enum-ciphers.npe
+description = "Enumerate supported cipher suites"
+author = "NetPeek Contributors"
+license = "Same as NetPeek"
+categories = {"safe"}
+dependencies = {}
+
+portrule = function(host, port)
+    return port.protocol == "tcp" and (port.number == 443 or port.number == 8443)
+end
+
+action = function(host, port)
+    local ok, res = pcall(npe.tls.enum_ciphers, host.ip, port.number)
+    if ok and type(res) == "table" then
+        return table.concat(res, "\n")
+    end
+    local fd, err = npe.socket_connect(host.ip, port.number, 3000)
+    if not fd then
+        return "ERROR: " .. tostring(err)
+    end
+    net.close(fd)
+    return "TLS port reachable (cipher enumeration unavailable in this build)"
+end
+

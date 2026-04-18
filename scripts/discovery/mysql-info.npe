@@ -1,0 +1,30 @@
+description = "MySQL server information"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"discovery", "safe", "default"}
+portrule_ports = {3306}
+
+portrule = function(host, port)
+    return port.service == "mysql" or port.number == 3306
+end
+
+action = function(host, port)
+    local args = (npe and npe.args) or {}
+    local banner = mysql.info(host.ip, port.number)
+    if not banner then
+        return "MySQL probe failed"
+    end
+
+    local output = {
+        "MySQL server information",
+        "protocol_version: " .. tostring(banner.protocol_version or ""),
+        "server_version: " .. tostring(banner.server_version or "")
+    }
+
+    if args.mysql_user or args.mysql_pass then
+        table.insert(output, "credentials_provided: true")
+        table.insert(output, "note: authenticated MySQL enrichment is not available in this build")
+    end
+
+    return table.concat(output, "\n")
+end

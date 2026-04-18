@@ -1,0 +1,57 @@
+description = "Check for OpenSSL CCS injection behavior (CVE-2014-0224)"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"vuln", "intrusive"}
+portrule_ports = {443, 8443}
+
+portrule = function(host, port)
+    return port.service == "https" or port.number == 443 or port.number == 8443
+end
+
+action = function(host, port)
+    local vuln = require "vuln"
+    local target = string.format("%s:%d", host.ip, port.number)
+
+    local malformed_ccs_probe =
+        "\x16\x03\x01\x00\x2e" ..
+        "\x01\x00\x00\x2a\x03\x01" ..
+        "\x53\x43\x5b\x90\x4b\x90\x4b\x90\x4b\x90\x4b\x90\x4b\x90\x4b\x90\x4b\x90\x4b\x90" ..
+        "\x00\x00\x02\x00\x35\x01\x00" ..
+        "\x14\x03\x01\x00\x01\x01"
+
+    local response, err = vuln.tcp_probe(host.ip, port.number, malformed_ccs_probe, {
+        timeout_ms = 5000,
+        max_bytes = 4096,
+    })
+
+    if not response then
+        return vuln.result({
+            check = "ssl-ccs-injection",
+            cve = "CVE-2014-0224",
+            vulnerable = false,
+            confidence = "low",
+            severity = "high",
+            target = target,
+            evidence = "probe_failed:" .. tostring(err or "unknown"),
+            notes = "No response to malformed CCS probe",
+        })
+    end
+
+    local first = string.byte(response, 1) or 0
+    local second = string.byte(response, 2) or 0
+    local alert_seen = (first == 0x15)
+    local suspicious_handshake = (first == 0x16 and (second == 0x03))
+
+    return vuln.result({
+        check = "ssl-ccs-injection",
+        cve = "CVE-2014-0224",
+        vulnerable = suspicious_handshake and not alert_seen,
+        confidence = (suspicious_handshake and not alert_seen) and "medium" or "low",
+        severity = "high",
+        target = target,
+        evidence = string.format("first_record=0x%02x second=0x%02x bytes=%d", first, second, #response),
+        notes = (suspicious_handshake and not alert_seen)
+            and "Handshake continued after unexpected CCS payload"
+            or "Server rejected or did not process unexpected CCS payload",
+    })
+end

@@ -1,0 +1,28 @@
+description = "Check anonymous FTP login"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"discovery", "safe", "default"}
+portrule_ports = {21, 990}
+
+portrule = function(host, port)
+    return port.service == "ftp" or port.number == 21 or port.number == 990
+end
+
+action = function(host, port)
+    local args = (npe and npe.args) or {}
+    local user = args.ftp_user or "anonymous"
+    local pass = args.ftp_pass or "anonymous@"
+
+    local result, err = ftp.anonymous(host.ip, port.number, user, pass)
+    if not result then
+        return string.format("FTP anonymous probe failed: %s", err or "unknown error")
+    end
+
+    return string.format(
+        "FTP anonymous login\nuser: %s\nsuccess: %s\ncode: %s\nmessage: %s",
+        user,
+        tostring(result.success),
+        tostring(result.code or ""),
+        tostring(result.message or "")
+    )
+end

@@ -1,0 +1,22 @@
+-- scripts/default/ssh-version.npe
+description = "Detect SSH server version"
+author = "NetPeek Team"
+categories = {"default", "discovery", "safe"}
+
+portrule = function(host, port)
+    return port.service == "ssh" or port.number == 22
+end
+
+action = function(host, port)
+    local socket = net.connect(host.ip, port.number)
+    if not socket then
+        return nil
+    end
+    net.set_timeout(socket, 5000)
+    local banner = net.recv(socket)
+    net.close(socket)
+    if banner and string.match(banner, "^SSH%-") then
+        return banner
+    end
+    return nil
+end

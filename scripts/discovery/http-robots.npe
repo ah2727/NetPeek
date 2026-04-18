@@ -1,0 +1,221 @@
+-- http-robots.npe
+description = "Fetch and parse robots.txt"
+author      = "NPE"
+license     = "MIT"
+categories  = {"discovery", "safe", "default"}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or
+           port.number == 80 or port.number == 443 or port.number == 8080
+end
+action = function(host, port)
+    local http = require "http"
+
+    local scheme = (port.number == 443 or port.service == "https") and "https" or "http"
+    local target = host.name or host.ip
+    local alt_target = nil
+    if not target:match("^www%.") then
+        alt_target = "www." .. target
+    end
+
+    local function get(url)
+        local r, e = http.get(url)
+        if not r then return nil, e end
+
+        if (r.status == 301 or r.status == 302) and r.headers then
+            local loc = r.headers["location"]
+            if loc then
+                return http.get(loc)
+            end
+        end
+
+        return r
+    end
+
+    local function normalize_robots_path(value)
+        if not value then
+            return nil
+        end
+
+        local v = value:match("^%s*(.-)%s*$")
+        if not v or v == "" then
+            return nil
+        end
+
+        if v:match("^https?://") then
+            local host_part, path_part = v:match("^https?://([^/]+)(/.*)$")
+            if not host_part or not path_part or host_part ~= target then
+                return nil
+            end
+            v = path_part
+        end
+
+        if not v:match("^/") then
+            v = "/" .. v
+        end
+
+        v = v:gsub("%?.*$", "")
+        v = v:gsub("//+", "/")
+
+        if v == "/robots.txt" then
+            return v
+        end
+
+        if v:match("/robots%.txt$") then
+            return v
+        end
+
+        if not v:match("/$") then
+            local parent = v:match("(.*/)")
+            v = parent or "/"
+        end
+
+        return v .. "robots.txt"
+    end
+
+    local function parse_directive_lines(body)
+        local directives = {}
+        local children = {}
+        local has_useful = false
+
+        local useful_keys = {
+            ["user-agent"] = true,
+            ["allow"] = true,
+            ["disallow"] = true,
+            ["sitemap"] = true,
+            ["crawl-delay"] = true,
+            ["host"] = true,
+            ["clean-param"] = true,
+        }
+
+        for line in body:gmatch("[^\r\n]+") do
+            if line:match("^%s*[^#]") then
+                local trimmed = line:match("^%s*(.-)%s*$")
+                if trimmed and trimmed ~= "" then
+                    local key, value = trimmed:match("^%s*([^:]+)%s*:%s*(.-)%s*$")
+                    if key and value then
+                        local k = key:lower()
+                        if useful_keys[k] then
+                            has_useful = true
+                            table.insert(directives, trimmed)
+                        end
+
+                        if k == "allow" or k == "disallow" or k == "sitemap" then
+                            local child = normalize_robots_path(value)
+                            if child and child ~= "/robots.txt" then
+                                children[child] = true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        return directives, children, has_useful
+    end
+
+    local max_depth = 2
+    local max_files = 12
+
+    local queue = {
+        { path = "/robots.txt", depth = 0 }
+    }
+
+    local common_paths = {
+        "/blog/robots.txt",
+        "/news/robots.txt",
+        "/shop/robots.txt",
+        "/store/robots.txt",
+        "/admin/robots.txt",
+        "/api/robots.txt",
+        "/static/robots.txt",
+        "/assets/robots.txt",
+        "/cdn/robots.txt",
+        "/common/robots.txt",
+    }
+
+    for _, p in ipairs(common_paths) do
+        table.insert(queue, { path = p, depth = 1 })
+    end
+
+    local seen = {}
+    local output_sections = {}
+    local processed = 0
+    local root_seen_useful = false
+
+    while #queue > 0 and processed < max_files do
+        local item = table.remove(queue, 1)
+        local path = item.path
+        local depth = item.depth
+
+        if not seen[path] then
+            seen[path] = true
+            processed = processed + 1
+
+            local active_host = target
+            local url = string.format("%s://%s%s", scheme, active_host, path)
+            local response, err = get(url)
+
+            if (not response or response.status ~= 200) and path == "/robots.txt" and alt_target then
+                local alt_url = string.format("%s://%s%s", scheme, alt_target, path)
+                local alt_response, alt_err = get(alt_url)
+                if alt_response and (alt_response.status == 200 or ((alt_response.status == 204) and #(alt_response.body or "") > 0)) then
+                    response = alt_response
+                    err = nil
+                    active_host = alt_target
+                elseif not response and alt_err then
+                    err = alt_err
+                end
+            end
+
+            if not response then
+                if path == "/robots.txt" then
+                    return "ERROR: " .. (err or "HTTP request failed")
+                end
+            elseif response.status == 200 or (response.status == 204 and #(response.body or "") > 0) then
+                local body = response.body or ""
+                if #body > 0 then
+                    local directives, children, has_useful = parse_directive_lines(body)
+                    if path == "/robots.txt" and has_useful then
+                        root_seen_useful = true
+                    end
+
+                    if has_useful and #directives > 0 then
+                        if response.status ~= 200 then
+                            table.insert(output_sections, string.format("Source: %s (HTTP %d)", path, response.status))
+                        else
+                            table.insert(output_sections, "Source: " .. path)
+                        end
+                        if active_host ~= target then
+                            table.insert(output_sections, "Host: " .. active_host)
+                        end
+                        for _, d in ipairs(directives) do
+                            table.insert(output_sections, d)
+                        end
+                    end
+
+                    if depth < max_depth then
+                        for child_path, _ in pairs(children) do
+                            if not seen[child_path] then
+                                table.insert(queue, { path = child_path, depth = depth + 1 })
+                            end
+                        end
+                    end
+                elseif path == "/robots.txt" then
+                    return "Empty robots.txt"
+                end
+            elseif path == "/robots.txt" then
+                return "HTTP " .. response.status
+            end
+        end
+    end
+
+    if #output_sections == 0 then
+        if not root_seen_useful then
+            return "No valid robots directives found"
+        end
+        return "robots.txt exists but contains only comments"
+    end
+
+    return table.concat(output_sections, "\n")
+end

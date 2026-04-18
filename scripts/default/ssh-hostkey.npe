@@ -1,0 +1,20 @@
+-- ssh-hostkey.npe
+description = "Retrieve SSH host key fingerprints"
+author = "NetPeek Contributors"
+license = "Same as NetPeek"
+categories = {"safe", "default"}
+dependencies = {}
+
+portrule = function(host, port)
+    return port.protocol == "tcp" and (port.number == 22 or port.service == "ssh")
+end
+
+action = function(host, port)
+    local fd, err = npe.socket_connect(host.ip, port.number, 3000)
+    if not fd then return "ERROR: " .. tostring(err) end
+    local banner = npe.recv(fd, 2048, 3000)
+    net.close(fd)
+    if not banner then return "No SSH banner" end
+    return "SSH banner: " .. tostring(banner):gsub("\r", ""):gsub("\n", "")
+end
+

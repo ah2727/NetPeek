@@ -1,0 +1,27 @@
+-- http-headers.npe
+description = "Enumerate HTTP response headers"
+author = "NPE"
+license = "MIT"
+categories = {"discovery", "safe", "default"}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or 
+           port.number == 80 or port.number == 443 or port.number == 8080
+end
+
+action = function(host, port)
+    local http = require "http"
+    local url = string.format("http://%s:%d/", host.ip, port.number)
+    
+    local response = http.get(url)
+    if not response then
+        return nil
+    end
+    
+    local output = {}
+    for k, v in pairs(response.headers or {}) do
+        table.insert(output, string.format("%s: %s", k, v))
+    end
+    
+    return table.concat(output, "\n")
+end

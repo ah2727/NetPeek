@@ -1,0 +1,67 @@
+description = "Check for SMB MS17-010 / EternalBlue indicators"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"vuln", "intrusive"}
+portrule_ports = {445}
+
+portrule = function(host, port)
+    return port.service == "smb" or port.number == 445
+end
+
+action = function(host, port)
+    local vuln = require "vuln"
+    local smb = require "smb"
+    local target = string.format("%s:%d", host.ip, port.number)
+
+    local negotiate_ok = false
+    local dialect = "unknown"
+
+    local n = smb.negotiate(host.ip, port.number)
+    if n and n.protocol then
+        negotiate_ok = true
+        dialect = tostring(n.dialect or "unknown")
+    end
+
+    local trans2_probe =
+        "\x00\x00\x00\x4f" ..
+        "\xff\x53\x4d\x42\x32\x00\x00\x00\x00\x18\x07\xc0\x00\x00\x00\x00" ..
+        "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ..
+        "\x0f\x0c\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\xd4\x00\x00\x00" ..
+        "\x4a\x00\x00\x00\x00\x00\x00\x00\x57\x00\x54\x00\x52\x00\x41\x00\x4e\x00\x53\x00"
+
+    local raw_resp, probe_err = vuln.tcp_probe(host.ip, port.number, trans2_probe, {
+        timeout_ms = 5000,
+        max_bytes = 8192,
+    })
+
+    local vuln_signature = false
+    local evidence = {
+        "negotiate=" .. tostring(negotiate_ok),
+        "dialect=" .. dialect,
+    }
+
+    if raw_resp then
+        if string.find(raw_resp, "\x05\x02\x00\xc0", 1, true) then
+            vuln_signature = true
+            table.insert(evidence, "status=STATUS_INSUFF_SERVER_RESOURCES")
+        end
+        if string.find(raw_resp, "\xff\x53\x4d\x42", 1, true) then
+            table.insert(evidence, "smb1_present=true")
+        end
+    else
+        table.insert(evidence, "probe_error=" .. tostring(probe_err or "unknown"))
+    end
+
+    return vuln.result({
+        check = "smb-ms17-010",
+        cve = "MS17-010",
+        vulnerable = vuln_signature,
+        confidence = vuln_signature and "high" or (negotiate_ok and "medium" or "low"),
+        severity = "critical",
+        target = target,
+        evidence = table.concat(evidence, ","),
+        notes = vuln_signature
+            and "SMB response matched known MS17-010 vulnerability signature"
+            or "No direct MS17-010 status signature observed",
+    })
+end

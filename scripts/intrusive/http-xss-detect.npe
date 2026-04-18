@@ -1,0 +1,76 @@
+description = "Reflected XSS detection via unique marker injection"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"intrusive", "vuln"}
+portrule_ports = {80, 443, 8080, 8443}
+
+portrule = function(host, port)
+    return port.service == "http" or port.service == "https" or
+           port.number == 80 or port.number == 443 or port.number == 8080 or port.number == 8443
+end
+
+local function append_query(path, query)
+    if string.find(path, "?", 1, true) then
+        return path .. "&" .. query
+    end
+    return path .. "?" .. query
+end
+
+action = function(host, port)
+    local args = (npe and npe.args) or {}
+    local intrusive = require "intrusive"
+    local vuln = require "vuln"
+    local http = require "http"
+
+    local timeout_ms = math.floor(intrusive.arg_number(args, "timeout_ms", 5000, 1000, 15000))
+    local path = intrusive.normalize_path(args.path or "/")
+    local target = intrusive.target(host, port)
+
+    local marker = "NPXSS_" .. tostring(port.number) .. "_" .. tostring(string.len(host.ip or ""))
+    local encoded_payload = "%3Cscript%3E" .. marker .. "%3C/script%3E"
+    local probe_path = append_query(path, "q=" .. encoded_payload)
+    local url = intrusive.build_url(host, port, probe_path)
+
+    local response, err = http.request("GET", url, {
+        timeout_ms = timeout_ms,
+        verify_ssl = false,
+        headers = {
+            ["User-Agent"] = "NetPeek/XSS-Probe",
+            ["Accept"] = "text/html,application/xhtml+xml,*/*",
+        }
+    })
+
+    if not response then
+        return vuln.result({
+            check = "http-xss-detect",
+            cve = "generic",
+            vulnerable = false,
+            confidence = "low",
+            severity = "medium",
+            target = target,
+            evidence = "probe_failed:" .. tostring(err or "unknown"),
+            notes = "Unable to evaluate reflected XSS markers",
+        })
+    end
+
+    local body = tostring(response.body or "")
+    local body_lower = string.lower(body)
+    local marker_lower = string.lower(marker)
+    local reflected = string.find(body_lower, marker_lower, 1, true) ~= nil
+    local script_context = string.find(body_lower, "<script>", 1, true) ~= nil
+
+    return vuln.result({
+        check = "http-xss-detect",
+        cve = "generic",
+        vulnerable = reflected,
+        confidence = reflected and (script_context and "high" or "medium") or "medium",
+        severity = "medium",
+        target = target,
+        evidence = reflected
+            and (script_context and "marker_reflected_in_script_context" or "marker_reflected_in_response")
+            or "marker_not_reflected",
+        notes = reflected
+            and "Unique XSS marker reflected in response; verify escaping/encoding controls"
+            or "No reflected marker observed for tested payload",
+    })
+end

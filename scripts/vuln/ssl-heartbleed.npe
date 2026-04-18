@@ -1,0 +1,52 @@
+description = "Check for TLS Heartbleed (CVE-2014-0160)"
+author = "NetPeek Team"
+license = "MIT"
+categories = {"vuln", "intrusive"}
+portrule_ports = {443, 8443}
+
+portrule = function(host, port)
+    return port.service == "https" or port.number == 443 or port.number == 8443
+end
+
+action = function(host, port)
+    local vuln = require "vuln"
+    local target = string.format("%s:%d", host.ip, port.number)
+
+    local heartbeat_payload =
+        "\x18\x03\x02\x00\x03" ..
+        "\x01\x40\x00"
+
+    local response, err = vuln.tls_probe(host.ip, port.number, heartbeat_payload, {
+        timeout_ms = 5000,
+        max_bytes = 32768,
+    })
+
+    if not response then
+        return vuln.result({
+            check = "ssl-heartbleed",
+            cve = "CVE-2014-0160",
+            vulnerable = false,
+            confidence = "low",
+            severity = "high",
+            target = target,
+            evidence = "probe_failed:" .. tostring(err or "unknown"),
+            notes = "TLS heartbeat probe did not return usable data",
+        })
+    end
+
+    local looks_like_heartbeat = (#response >= 5 and string.byte(response, 1) == 0x18)
+    local overread = #response > 7
+
+    return vuln.result({
+        check = "ssl-heartbleed",
+        cve = "CVE-2014-0160",
+        vulnerable = (looks_like_heartbeat and overread),
+        confidence = (looks_like_heartbeat and overread) and "high" or "medium",
+        severity = "high",
+        target = target,
+        evidence = string.format("response_bytes=%d,first_byte=0x%02x", #response, string.byte(response, 1) or 0),
+        notes = (looks_like_heartbeat and overread)
+            and "Server returned heartbeat data after oversized heartbeat request"
+            or "No heartbeat over-read behavior observed",
+    })
+end

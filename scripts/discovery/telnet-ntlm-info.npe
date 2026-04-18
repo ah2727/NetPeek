@@ -1,0 +1,22 @@
+-- telnet-ntlm-info.npe
+description = "Extract NTLM info from Telnet"
+author = "NetPeek Contributors"
+license = "Same as NetPeek"
+categories = {"safe"}
+dependencies = {}
+
+portrule = function(host, port)
+    return port.protocol == "tcp" and (port.number == 23)
+end
+
+action = function(host, port)
+    local fd, err = npe.socket_connect(host.ip, port.number, 3000)
+    if not fd then return "ERROR: " .. tostring(err) end
+    local data = npe.recv(fd, 4096, 3000)
+    net.close(fd)
+    if not data then return "No Telnet negotiation data" end
+    local ntlm = data:match("NTLMSSP[^"]+")
+    if ntlm then return "NTLM marker found" end
+    return "No NTLM marker found"
+end
+

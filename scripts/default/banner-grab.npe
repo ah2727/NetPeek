@@ -1,0 +1,29 @@
+-- scripts/default/banner-grab.npe
+description = "Grab service banner from open TCP ports"
+author = "NetPeek Team"
+categories = {"default", "discovery", "safe"}
+
+portrule = function(host, port)
+    return port.protocol == "tcp" and port.state == "open"
+end
+
+action = function(host, port)
+    local socket = net.connect(host.ip, port.number)
+    if not socket then
+        return nil
+    end
+    
+    -- Send HTTP request to trigger a response
+    local request = "GET / HTTP/1.0\r\n\r\n"
+    net.send(socket, request)
+    
+    net.set_timeout(socket, 5000)
+    local banner = net.recv(socket)
+    net.close(socket)
+    
+    if banner and #banner > 0 then
+        return "Banner: " .. banner
+    end
+    return nil
+end
+
